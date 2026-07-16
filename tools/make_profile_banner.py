@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Generate The Basement Coders developer-profile banner (4096x2304, 16:9).
+"""Generate The Basement Coders brand banners (pure PIL, reproducible).
 
-Matches the brand on index.html: a 135° dark-slate → indigo gradient, paper-
-coloured text, and the "Small, useful apps — made with care." tagline, with a
-subtle terminal-prompt motif for the "coders" vibe. Pure PIL, reproducible.
+Renders two sizes from one proportional layout:
+  * profile-banner-4096x2304.png — 16:9 developer-profile banner (GitHub, etc.)
+  * web-header.png               — wide 3:1 strip for the site header (no crop)
+
+Brand (from index.html): 135° dark-slate → indigo gradient, paper text, the
+"Small, useful apps — made with care." tagline, and a terminal-prompt motif.
 """
 from PIL import Image, ImageDraw, ImageFont
-import math
-
-W, H = 4096, 2304
-OUT = "profile-banner-4096x2304.png"
 
 # Brand palette (from index.html)
 SLATE = (43, 47, 58)      # #2b2f3a
@@ -25,79 +24,93 @@ def lerp(a, b, t):
     return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
-# ── 135° diagonal gradient (top-left slate → bottom-right indigo) ──────────
-base = Image.new("RGB", (W, H), SLATE)
-px = base.load()
-# projection onto the 135° axis: t = (x + y) normalised
-maxproj = W + H
-for y in range(H):
-    for x in range(0, W, 1):
-        pass  # replaced by row fill below for speed
+def make(W, H, out, *, two_line_title):
+    """Render a banner. `two_line_title` stacks "The Basement" / "Coders" (tall
+    formats); otherwise a single "The Basement Coders" line (wide strips)."""
+    cx = W // 2
 
-# Fast row-wise gradient: precompute per-(x+y) colour is expensive; do it with
-# a small gradient image scaled up along the diagonal instead.
-grad = Image.new("RGB", (W, H))
-gpx = grad.load()
-for y in range(H):
-    yy = y / H
-    for x in range(W):
-        t = (x / W + yy) / 2.0
-        gpx[x, y] = lerp(SLATE, INDIGO, t)
-base = grad
-draw = ImageDraw.Draw(base, "RGBA")
+    # ── 135° diagonal gradient (top-left slate → bottom-right indigo) ──────
+    base = Image.new("RGB", (W, H))
+    gpx = base.load()
+    for y in range(H):
+        yy = y / H
+        for x in range(W):
+            gpx[x, y] = lerp(SLATE, INDIGO, (x / W + yy) / 2.0)
+    draw = ImageDraw.Draw(base, "RGBA")
 
-# ── Subtle starfield / code-dust in the dark corner ────────────────────────
-# deterministic pseudo-random dots (no Math.random needed)
-seed = 1234567
-def rnd():
-    global seed
-    seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
-    return seed / 0x7FFFFFFF
+    # ── Starfield, denser toward the dark top-left corner ─────────────────
+    seed = 1234567
 
-for _ in range(900):
-    x = rnd() * W
-    y = rnd() * H
-    # brighter/denser toward the dark top-left corner
-    corner = 1.0 - ((x / W) + (y / H)) / 2.0
-    if rnd() > corner * 0.9:
-        continue
-    r = 1 + rnd() * 2.2
-    a = int(40 + corner * 120)
-    draw.ellipse([x - r, y - r, x + r, y + r], fill=(255, 255, 255, a))
+    def rnd():
+        nonlocal seed
+        seed = (1103515245 * seed + 12345) & 0x7FFFFFFF
+        return seed / 0x7FFFFFFF
 
-# ── Title, prompt, tagline (centred stack) ──────────────────────────────────
-title_font = ImageFont.truetype(FONT_BOLD, 360)
-prompt_font = ImageFont.truetype(FONT_MONO, 150)
-tag_font = ImageFont.truetype(FONT_REG, 132)
+    dots = int(W * H / 10000)
+    for _ in range(dots):
+        x = rnd() * W
+        y = rnd() * H
+        corner = 1.0 - ((x / W) + (y / H)) / 2.0
+        if rnd() > corner * 0.9:
+            continue
+        r = 1 + rnd() * (H / 1000)
+        a = int(40 + corner * 120)
+        draw.ellipse([x - r, y - r, x + r, y + r], fill=(255, 255, 255, a))
 
-cx = W // 2
+    # ── Proportional type sizes ───────────────────────────────────────────
+    title_px = int(H * (0.155 if two_line_title else 0.20))
+    prompt_px = int(title_px * 0.42)
+    tag_px = int(title_px * 0.37)
+    title_font = ImageFont.truetype(FONT_BOLD, title_px)
+    prompt_font = ImageFont.truetype(FONT_MONO, prompt_px)
+    tag_font = ImageFont.truetype(FONT_REG, tag_px)
 
-# terminal prompt line above the title: "~/basement $ ▮"
-prompt = "~/basement $"
-draw.text((cx, 720), prompt, font=prompt_font, fill=(255, 255, 255, 150),
-          anchor="mm")
-# blinking-cursor block after the prompt
-pb = draw.textbbox((cx, 720), prompt, font=prompt_font, anchor="mm")
-draw.rectangle([pb[2] + 30, pb[1] + 10, pb[2] + 100, pb[3] - 10],
-               fill=(255, 255, 255, 150))
+    def centered(text, font, y, fill, shadow=True):
+        off = max(2, H // 384)
+        if shadow:
+            draw.text((cx + off, y + off), text, font=font, fill=(0, 0, 0, 90),
+                      anchor="mm")
+        draw.text((cx, y), text, font=font, fill=fill, anchor="mm")
 
-# Title — two words, tight stack, paper colour with soft shadow
-def centered(text, font, y, fill, shadow=True):
-    if shadow:
-        draw.text((cx + 6, y + 6), text, font=font, fill=(0, 0, 0, 90),
-                  anchor="mm")
-    draw.text((cx, y), text, font=font, fill=fill, anchor="mm")
+    # ── Vertical rhythm (fractions of H) ──────────────────────────────────
+    prompt = "~/basement $"
+    if two_line_title:
+        y_prompt, y_t1, y_t2 = H * 0.31, H * 0.50, H * 0.66
+        y_rule, y_tag = H * 0.76, H * 0.82
+    else:
+        y_prompt, y_t1 = H * 0.22, H * 0.50
+        y_t2 = None
+        y_rule, y_tag = H * 0.68, H * 0.80
 
-centered("The Basement", title_font, 1150, PAPER)
-centered("Coders", title_font, 1520, PAPER)
+    # terminal prompt + blinking cursor block
+    centered(prompt, prompt_font, y_prompt, (255, 255, 255, 150), shadow=False)
+    pb = draw.textbbox((cx, y_prompt), prompt, font=prompt_font, anchor="mm")
+    cur_h = pb[3] - pb[1]
+    gap = prompt_px * 0.2
+    draw.rectangle([pb[2] + gap, pb[1] + cur_h * 0.08,
+                    pb[2] + gap + prompt_px * 0.5, pb[3] - cur_h * 0.08],
+                   fill=(255, 255, 255, 150))
 
-# accent rule under the title (thin)
-draw.rounded_rectangle([cx - 380, 1748, cx + 380, 1754], radius=3,
-                       fill=(255, 255, 255, 190))
+    # title
+    if two_line_title:
+        centered("The Basement", title_font, y_t1, PAPER)
+        centered("Coders", title_font, y_t2, PAPER)
+    else:
+        centered("The Basement Coders", title_font, y_t1, PAPER)
 
-# tagline
-centered("Small, useful apps — made with care.", tag_font, 1900,
-         (247, 243, 233, 235), shadow=False)
+    # thin accent rule
+    rule_w = W * 0.19
+    draw.rounded_rectangle([cx - rule_w, y_rule - 3, cx + rule_w, y_rule + 3],
+                           radius=3, fill=(255, 255, 255, 190))
 
-base.save(OUT)
-print("wrote", OUT, base.size)
+    # tagline
+    centered("Small, useful apps — made with care.", tag_font, y_tag,
+             (247, 243, 233, 235), shadow=False)
+
+    base.save(out)
+    print("wrote", out, base.size)
+
+
+if __name__ == "__main__":
+    make(4096, 2304, "profile-banner-4096x2304.png", two_line_title=True)
+    make(2400, 800, "web-header.png", two_line_title=False)
